@@ -47,25 +47,41 @@ def generate_image(req: GenerateRequest):
         }
     }
     
-    try:
-        response = requests.post(HF_MODEL_API, headers=headers, json=payload, timeout=60)
-        
-        # Check if Hugging Face returns an error (e.g. model warming up)
-        if response.status_code != 200:
-            try:
-                error_info = response.json()
-                error_msg = error_info.get("error", "Failed to generate image from Hugging Face API.")
-            except Exception:
-                error_msg = f"Hugging Face returned status {response.status_code}"
-                
-            raise HTTPException(status_code=response.status_code, detail=error_msg)
+    import time
+    
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = requests.post(HF_MODEL_API, headers=headers, json=payload, timeout=60)
             
-        return Response(content=response.content, media_type="image/jpeg")
-        
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Request to Hugging Face Inference API timed out.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+            # Check if Hugging Face returns an error (e.g. model warming up 503)
+            if response.status_code != 200:
+                try:
+                    error_info = response.json()
+                    error_msg = error_info.get("error", "Failed to generate image from Hugging Face API.")
+                except Exception:
+                    error_msg = f"Hugging Face returned status {response.status_code}"
+                
+                # If model is warming up (503), wait and retry
+                if response.status_code == 503 and attempt < 2:
+                    time.sleep(3)
+                    continue
+                    
+                raise HTTPException(status_code=response.status_code, detail=error_msg)
+                
+            return Response(content=response.content, media_type="image/jpeg")
+            
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(2)  # Wait 2 seconds before retrying
+                continue
+            
+    # If all 3 attempts failed due to network errors
+    raise HTTPException(
+        status_code=502, 
+        detail=f"Hugging Face is temporarily unreachable from Vercel: {str(last_error)}"
+    )
 
 @app.get("/api/health")
 def health_check():

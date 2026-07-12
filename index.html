@@ -522,27 +522,46 @@
 
             try {
                 let response;
+                let usedProxy = false;
 
                 if (!isLocalFile) {
-                    // Production Vercel Serverless proxy backend call
-                    const requestPayload = {
-                        prompt: promptText,
-                        negative_prompt: negPromptText,
-                        guidance_scale: guidanceValue
-                    };
+                    try {
+                        // Attempt to call our Vercel serverless proxy first
+                        const requestPayload = {
+                            prompt: promptText,
+                            negative_prompt: negPromptText,
+                            guidance_scale: guidanceValue
+                        };
 
-                    response = await fetch(
-                        "/api/generate",
-                        {
-                            headers: {
-                                "Content-Type": "application/json"
-                            },
-                            method: "POST",
-                            body: JSON.stringify(requestPayload),
-                        }
-                    );
-                } else {
-                    // Local direct Hugging Face serverless API call
+                        response = await fetch(
+                            "/api/generate",
+                            {
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                method: "POST",
+                                body: JSON.stringify(requestPayload),
+                            }
+                        );
+                        usedProxy = true;
+                    } catch (netErr) {
+                        console.warn("Vercel proxy failed, trying direct HF fallback...", netErr);
+                    }
+                }
+
+                // If Vercel proxy failed, returned an error status, or we are running locally
+                if (!response || !response.ok) {
+                    if (usedProxy) {
+                        showToast("Vercel proxy network error. Trying direct Hugging Face connection...", "info");
+                    }
+
+                    if (!token) {
+                        // Force show the settings modal so they can input a token
+                        toggleSettingsModal();
+                        showToast("Please enter a Hugging Face Token for direct fallback", "info");
+                        throw new Error("Vercel proxy connection failed. A Hugging Face Token is required to call the API directly.");
+                    }
+
                     const requestPayload = {
                         inputs: promptText,
                         parameters: {
