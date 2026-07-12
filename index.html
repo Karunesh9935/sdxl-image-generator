@@ -364,11 +364,19 @@
 
         // Load Stored Token on Load
         window.addEventListener('DOMContentLoaded', () => {
+            const isLocalFile = window.location.protocol === 'file:';
+            
+            // Hide the API key button if running on Vercel, since Vercel uses secure backend env vars
+            if (!isLocalFile) {
+                const keyBtn = document.querySelector('button[onclick="toggleSettingsModal()"]');
+                if (keyBtn) keyBtn.style.display = 'none';
+            }
+
             const savedToken = localStorage.getItem('hf_token');
             if (savedToken) {
                 document.getElementById('modal-token-input').value = savedToken;
-            } else {
-                // Proactively open settings if no token is saved
+            } else if (isLocalFile) {
+                // Proactively open settings if no token is saved AND we are running locally
                 setTimeout(() => {
                     toggleSettingsModal();
                 }, 800);
@@ -470,7 +478,9 @@
             const negPromptText = document.getElementById('neg-prompt').value.trim();
             const guidanceValue = parseFloat(document.getElementById('guidance').value);
 
-            if (!token) {
+            const isLocalFile = window.location.protocol === 'file:';
+
+            if (isLocalFile && !token) {
                 toggleSettingsModal();
                 showToast("Authentication required", "info");
                 return;
@@ -511,30 +521,52 @@
             }, 5500);
 
             try {
-                // Request Parameters config mapping
-                const requestPayload = {
-                    inputs: promptText,
-                    parameters: {
+                let response;
+
+                if (!isLocalFile) {
+                    // Production Vercel Serverless proxy backend call
+                    const requestPayload = {
+                        prompt: promptText,
                         negative_prompt: negPromptText,
                         guidance_scale: guidanceValue
-                    }
-                };
+                    };
 
-                const response = await fetch(
-                    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-                    {
-                        headers: {
-                            "Authorization": `Bearer ${token}`,
-                            "Content-Type": "application/json"
-                        },
-                        method: "POST",
-                        body: JSON.stringify(requestPayload),
-                    }
-                );
+                    response = await fetch(
+                        "/api/generate",
+                        {
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            method: "POST",
+                            body: JSON.stringify(requestPayload),
+                        }
+                    );
+                } else {
+                    // Local direct Hugging Face serverless API call
+                    const requestPayload = {
+                        inputs: promptText,
+                        parameters: {
+                            negative_prompt: negPromptText,
+                            guidance_scale: guidanceValue
+                        }
+                    };
+
+                    response = await fetch(
+                        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+                        {
+                            headers: {
+                                "Authorization": `Bearer ${token}`,
+                                "Content-Type": "application/json"
+                            },
+                            method: "POST",
+                            body: JSON.stringify(requestPayload),
+                        }
+                    );
+                }
 
                 if (!response.ok) {
                     const errorResponse = await response.json().catch(() => ({}));
-                    const errorDetail = errorResponse.error || "The serverless node timed out. Try again in a moment.";
+                    const errorDetail = errorResponse.detail || errorResponse.error || "The serverless node timed out. Try again in a moment.";
                     throw new Error(errorDetail);
                 }
 
