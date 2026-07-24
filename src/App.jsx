@@ -171,7 +171,7 @@ export default function App() {
         console.warn('Backend proxy unreachable, using direct real-time link generation...', proxyError);
       }
 
-      // ATTEMPT 2: Direct Real-Time Link Fallback
+      // ATTEMPT 2: Direct Client Fallback (fetches blob for 100% reliable local rendering)
       if (!response || !response.ok) {
         const pollModel = model === 'flux' ? 'flux' : 'sdxl';
         const seed = Math.floor(Math.random() * 900000) + 10000;
@@ -180,18 +180,33 @@ export default function App() {
           : prompt.trim();
         const liveLink = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=${width}&height=${height}&model=${pollModel}&nologo=true&seed=${seed}`;
         
+        try {
+          const imgResp = await fetch(liveLink);
+          if (imgResp.ok) {
+            const blob = await imgResp.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            setImageSrc(blobUrl);
+            setRealtimeUrl(liveLink);
+            showToast('Image generated successfully!');
+            return;
+          }
+        } catch (fetchErr) {
+          console.warn('Direct fetch error, falling back to direct URL:', fetchErr);
+        }
+
         setImageSrc(liveLink);
         setRealtimeUrl(liveLink);
-        showToast('Real-time image generated successfully!');
+        showToast('Image generated successfully!');
         return;
       }
 
-      // Process JSON response containing real-time live link
+      // Process JSON or Blob response from serverless backend
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const data = await response.json();
-        setImageSrc(data.url);
-        setRealtimeUrl(data.url);
+        const displaySrc = data.image || data.url;
+        setImageSrc(displaySrc);
+        setRealtimeUrl(data.url || displaySrc);
       } else {
         const blob = await response.blob();
         const localUrl = URL.createObjectURL(blob);

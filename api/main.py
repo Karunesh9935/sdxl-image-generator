@@ -74,6 +74,7 @@ def generate_image(req: GenerateRequest):
     # Step 3: Attempt synthesis with Hugging Face if HF_TOKEN is configured (SDXL model)
     if HF_TOKEN and model_key == "sdxl":
         try:
+            import base64
             client = InferenceClient(token=HF_TOKEN)
             image = client.text_to_image(
                 prompt=req.prompt,
@@ -85,8 +86,17 @@ def generate_image(req: GenerateRequest):
             )
             buffer = BytesIO()
             image.save(buffer, format="JPEG", quality=90)
-            if not req.return_url:
-                return Response(content=buffer.getvalue(), media_type="image/jpeg")
+            img_bytes = buffer.getvalue()
+            b64_str = base64.b64encode(img_bytes).decode("utf-8")
+            data_uri = f"data:image/jpeg;base64,{b64_str}"
+            return {
+                "status": "success",
+                "image": data_uri,
+                "url": data_uri,
+                "model": model_key,
+                "width": req.width,
+                "height": req.height
+            }
         except Exception as hf_err:
             print(f"Hugging Face SDXL notice: {hf_err}. Falling back to free high-speed SDXL engine.")
 
@@ -94,6 +104,7 @@ def generate_image(req: GenerateRequest):
     import random
     import urllib.parse
     import urllib.request
+    import base64
 
     seed = random.randint(10000, 999999)
     
@@ -106,25 +117,33 @@ def generate_image(req: GenerateRequest):
     poll_model = "flux" if model_key == "flux" else "sdxl"
     realtime_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={req.width}&height={req.height}&model={poll_model}&nologo=true&seed={seed}"
 
-    # If client requests JSON payload with real-time live link
-    if req.return_url:
+    try:
+        req_obj = urllib.request.Request(realtime_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_obj, timeout=25) as resp:
+            img_bytes = resp.read()
+        
+        b64_str = base64.b64encode(img_bytes).decode("utf-8")
+        data_uri = f"data:image/jpeg;base64,{b64_str}"
+
         return {
             "status": "success",
+            "image": data_uri,
             "url": realtime_url,
             "model": model_key,
             "width": req.width,
             "height": req.height,
             "seed": seed
         }
-
-    # Step 5: Fallback binary JPEG stream handler
-    try:
-        req_obj = urllib.request.Request(realtime_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req_obj, timeout=25) as resp:
-            img_bytes = resp.read()
-        return Response(content=img_bytes, media_type="image/jpeg")
     except Exception as fallback_err:
-        raise HTTPException(status_code=502, detail=f"Image generation service unavailable: {str(fallback_err)}")
+        return {
+            "status": "success",
+            "image": realtime_url,
+            "url": realtime_url,
+            "model": model_key,
+            "width": req.width,
+            "height": req.height,
+            "seed": seed
+        }
 
 # HTTP GET route handler to check health and status configuration of the server
 @app.get("/api/health")
