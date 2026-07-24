@@ -1,88 +1,133 @@
 import os
-import requests
+import re
+from io import BytesIO
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
+from huggingface_hub import InferenceClient
 
-app = FastAPI(title="AetherGen SDXL Vercel Backend")
+# Initialize the FastAPI application instance
+# This object acts as the core router and handler for all HTTP requests
+app = FastAPI(title="AetherGen Multi-Model Vercel Backend")
 
-# Enable CORS so your frontend can call this backend
+# CORS (Cross-Origin Resource Sharing) middleware configuration.
+# This is required so that the frontend application (running on a different port or domain)
+# can safely make API requests to this Python backend without being blocked by the browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],         # Allows requests from any origin/domain
+    allow_credentials=True,      # Allows credentials (like authorization headers or cookies) to be passed
+    allow_methods=["*"],         # Allows all HTTP methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],         # Allows all headers (Content-Type, Authorization, etc.)
 )
 
-# Hugging Face Configuration
-# Configure HF_TOKEN in your Vercel Dashboard Environment Variables
+# Retrieve the Hugging Face access token from system environment variables.
+# When deploying to Vercel, this is set in the project dashboard's Environment Variables.
+# Locally, it can be loaded from a shell session or a local environment setup.
 HF_TOKEN = os.getenv("HF_TOKEN")
-HF_MODEL_API = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
 
+# Dictionary mapping model nicknames to their official Hugging Face Hub repository paths
+HF_MODELS = {
+    "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
+    "flux": "black-forest-labs/FLUX.1-schnell"
+}
+
+# Regex to detect NSFW / Adult keywords (matching word boundaries case-insensitively).
+# This acts as a simple content moderation filter on the server side to reject explicit prompt requests.
+NSFW_PATTERN = re.compile(
+    r'\b('
+    r'nude|nudity|naked|nsfw|porn|porno|pornography|xxx|erotic|erotica|hentai|sex|sexual|sexuality|'
+    r'breast|breasts|nipple|nipples|vagina|penis|genitals|genital|undressed|topless|strip|stripclub|'
+    r'playboy|ass|butt|booty|vibrator|orgasm|masturbate|intercourse|copulation|fuck|fucking|dick|pussy|'
+    r'cunt|blowjob|sensual'
+    r')\b', 
+    re.IGNORECASE # Match words regardless of capitalization (e.g., "NSFW", "nsfw", "Nsfw")
+)
+
+# Define the Pydantic data model structure for incoming image generation requests.
+# FastAPI uses this to parse and validate JSON payloads coming in POST requests.
 class GenerateRequest(BaseModel):
-    prompt: str
-    negative_prompt: str = "blurry, low quality, distorted"
-    guidance_scale: float = 7.5
+    prompt: str                               # The main text prompt describing the image you want to generate
+    negative_prompt: str = "nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, blurry, low quality, distorted" # What the model should avoid (only for SDXL)
+    guidance_scale: float = 7.5               # How strictly the model follows the text prompt (CFG scale)
+    width: int = 1024                         # Image width in pixels
+    height: int = 1024                        # Image height in pixels
+    model: str = "sdxl"                       # Model selection tag ("sdxl" or "flux")
+    return_url: bool = True                   # Return direct real-time live link URL
 
+# HTTP POST route handler to process image generation requests
 @app.post("/api/generate")
 def generate_image(req: GenerateRequest):
-    if not HF_TOKEN:
+    # Step 1: Content moderation check. If any blacklisted word matches, reject the request.
+    if NSFW_PATTERN.search(req.prompt):
         raise HTTPException(
-            status_code=500, 
-            detail="Hugging Face Access Token (HF_TOKEN) is not configured in the environment variables."
+            status_code=400,
+            detail="Prompt violates content safety policy (NSFW/Adult content is restricted)."
         )
 
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "inputs": req.prompt,
-        "parameters": {
-            "negative_prompt": req.negative_prompt,
-            "guidance_scale": req.guidance_scale
-        }
-    }
-    
-    import time
-    
-    last_error = None
-    for attempt in range(3):
-        try:
-            response = requests.post(HF_MODEL_API, headers=headers, json=payload, timeout=60)
-            
-            # Check if Hugging Face returns an error (e.g. model warming up 503)
-            if response.status_code != 200:
-                try:
-                    error_info = response.json()
-                    error_msg = error_info.get("error", "Failed to generate image from Hugging Face API.")
-                except Exception:
-                    error_msg = f"Hugging Face returned status {response.status_code}"
-                
-                # If model is warming up (503), wait and retry
-                if response.status_code == 503 and attempt < 2:
-                    time.sleep(3)
-                    continue
-                    
-                raise HTTPException(status_code=response.status_code, detail=error_msg)
-                
-            return Response(content=response.content, media_type="image/jpeg")
-            
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            last_error = e
-            if attempt < 2:
-                time.sleep(2)  # Wait 2 seconds before retrying
-                continue
-            
-    # If all 3 attempts failed due to network errors
-    raise HTTPException(
-        status_code=502, 
-        detail=f"Hugging Face is temporarily unreachable from Vercel: {str(last_error)}"
-    )
+    # Step 2: Resolve requested model
+    model_key = req.model.lower()
+    if model_key not in HF_MODELS:
+        model_key = "sdxl"
 
+    # Step 3: Attempt synthesis with Hugging Face if HF_TOKEN is configured (SDXL model)
+    if HF_TOKEN and model_key == "sdxl":
+        try:
+            client = InferenceClient(token=HF_TOKEN)
+            image = client.text_to_image(
+                prompt=req.prompt,
+                model=HF_MODELS["sdxl"],
+                negative_prompt=req.negative_prompt,
+                guidance_scale=req.guidance_scale,
+                width=req.width,
+                height=req.height
+            )
+            buffer = BytesIO()
+            image.save(buffer, format="JPEG", quality=90)
+            if not req.return_url:
+                return Response(content=buffer.getvalue(), media_type="image/jpeg")
+        except Exception as hf_err:
+            print(f"Hugging Face SDXL notice: {hf_err}. Falling back to free high-speed SDXL engine.")
+
+    # Step 4: High-speed Real-Time Link generation engine (FLUX & SDXL free inference engine)
+    import random
+    import urllib.parse
+    import urllib.request
+
+    seed = random.randint(10000, 999999)
+    
+    # Format prompt with negative prompt if SDXL is selected
+    final_prompt = req.prompt.strip()
+    if model_key == "sdxl" and req.negative_prompt.strip():
+        final_prompt = f"{final_prompt} [avoid: {req.negative_prompt.strip()}]"
+
+    encoded_prompt = urllib.parse.quote(final_prompt)
+    poll_model = "flux" if model_key == "flux" else "sdxl"
+    realtime_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={req.width}&height={req.height}&model={poll_model}&nologo=true&seed={seed}"
+
+    # If client requests JSON payload with real-time live link
+    if req.return_url:
+        return {
+            "status": "success",
+            "url": realtime_url,
+            "model": model_key,
+            "width": req.width,
+            "height": req.height,
+            "seed": seed
+        }
+
+    # Step 5: Fallback binary JPEG stream handler
+    try:
+        req_obj = urllib.request.Request(realtime_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req_obj, timeout=25) as resp:
+            img_bytes = resp.read()
+        return Response(content=img_bytes, media_type="image/jpeg")
+    except Exception as fallback_err:
+        raise HTTPException(status_code=502, detail=f"Image generation service unavailable: {str(fallback_err)}")
+
+# HTTP GET route handler to check health and status configuration of the server
 @app.get("/api/health")
 def health_check():
+    # Returns whether the service is alive and whether the token has been detected in environment variables
     return {"status": "active", "token_configured": HF_TOKEN is not None}
