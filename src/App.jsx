@@ -24,9 +24,9 @@ export default function App() {
   // APPLICATION STATE MANAGEMENT
   // ==========================================
 
-  // Prompt states: prompt holds user input; negativePrompt defines elements SDXL should avoid
+  // Prompt states: prompt holds user input; negativePrompt defines elements SDXL & Pollinations should avoid
   const [prompt, setPrompt] = useState('');
-  const [negativePrompt, setNegativePrompt] = useState('nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, blurry, low quality, distorted, bad anatomy, deformed');
+  const [negativePrompt, setNegativePrompt] = useState('bikini, swimsuit, swimwear, lingerie, underwear, cleavage, revealing clothing, scantily clad, topless, bottomless, nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, vulgar, erotic, blurry, low quality, distorted, bad anatomy, deformed');
   
   // Guidance scale (Classifier Free Guidance) determines how strictly SDXL adheres to prompt text
   const [guidanceScale, setGuidanceScale] = useState(7.5);
@@ -219,9 +219,20 @@ export default function App() {
 
         const pollModel = model === 'flux' ? 'flux' : 'sdxl';
         const seed = Math.floor(Math.random() * 900000) + 10000;
-        const promptText = (model === 'sdxl' && negativePrompt.trim()) 
-          ? `${prompt.trim()} [avoid: ${negativePrompt.trim()}]` 
-          : prompt.trim();
+        
+        let formattedPrompt = prompt.trim();
+        const isPeoplePrompt = /\b(girl|woman|female|lady|portrait|person|model|man|guy|boy)\b/i.test(formattedPrompt);
+        const hasClothingSpec = /\b(dress|shirt|jacket|coat|sweater|suit|hoodie|jeans|clothes|clothing|attire|outfit|saree|kurti|t-shirt)\b/i.test(formattedPrompt);
+        
+        if (isPeoplePrompt && !hasClothingSpec) {
+          formattedPrompt = `${formattedPrompt}, modestly dressed in elegant casual attire`;
+        }
+
+        const combinedAvoid = negativePrompt.trim() 
+          ? negativePrompt.trim() 
+          : 'bikini, swimsuit, swimwear, lingerie, underwear, cleavage, revealing clothing, scantily clad, topless, bottomless, nude, nsfw';
+
+        const promptText = `${formattedPrompt} [avoid: ${combinedAvoid}]`;
         finalLiveLink = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=${width}&height=${height}&model=${pollModel}&nologo=true&seed=${seed}`;
         
         try {

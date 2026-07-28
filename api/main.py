@@ -46,11 +46,21 @@ NSFW_PATTERN = re.compile(
     re.IGNORECASE # Match words regardless of capitalization (e.g., "NSFW", "nsfw", "Nsfw")
 )
 
+# Default negative prompt to strictly filter out bikinis, swimsuits, lingerie, revealing clothing, and NSFW elements
+DEFAULT_MODEST_NEGATIVE = (
+    "bikini, swimsuit, swimwear, lingerie, underwear, cleavage, revealing clothing, scantily clad, topless, bottomless, "
+    "nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, vulgar, erotic, blurry, low quality, distorted"
+)
+
+# Regex to detect people keywords in prompts to auto-enforce modest attire if no clothing is specified
+PEOPLE_PATTERN = re.compile(r'\b(girl|woman|female|lady|portrait|person|model|man|guy|boy)\b', re.IGNORECASE)
+CLOTHING_PATTERN = re.compile(r'\b(dress|shirt|jacket|coat|sweater|suit|hoodie|jeans|clothes|clothing|attire|outfit|saree|kurti|t-shirt)\b', re.IGNORECASE)
+
 # Define the Pydantic data model structure for incoming image generation requests.
 # FastAPI uses this to parse and validate JSON payloads coming in POST requests.
 class GenerateRequest(BaseModel):
     prompt: str                               # The main text prompt describing the image you want to generate
-    negative_prompt: str = "nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, vulgar, erotic, blurry, low quality, distorted" # What the model should avoid (only for SDXL)
+    negative_prompt: str = DEFAULT_MODEST_NEGATIVE # What the model should avoid
     guidance_scale: float = 7.5               # How strictly the model follows the text prompt (CFG scale)
     width: int = 1024                         # Image width in pixels
     height: int = 1024                        # Image height in pixels
@@ -64,7 +74,7 @@ def generate_image(req: GenerateRequest):
     if NSFW_PATTERN.search(req.prompt):
         raise HTTPException(
             status_code=400,
-            detail="Prompt violates content safety policy (NSFW/Adult content is restricted)."
+            detail="Prompt violates content safety policy (NSFW/Adult/Explicit content is restricted)."
         )
 
     # Step 2: Resolve requested model
@@ -72,15 +82,25 @@ def generate_image(req: GenerateRequest):
     if model_key not in HF_MODELS:
         model_key = "sdxl"
 
-    # Step 3: Attempt synthesis with Hugging Face if HF_TOKEN is configured (SDXL model)
+    # Step 3: Enforce modest clothing on prompt if describing people without specified clothing
+    processed_prompt = req.prompt.strip()
+    if PEOPLE_PATTERN.search(processed_prompt) and not CLOTHING_PATTERN.search(processed_prompt):
+        processed_prompt = f"{processed_prompt}, modestly dressed in elegant casual attire"
+
+    # Combine user negative prompt with default modest clothing negative prompt
+    neg_prompt = req.negative_prompt.strip() if req.negative_prompt else DEFAULT_MODEST_NEGATIVE
+    if "bikini" not in neg_prompt.lower():
+        neg_prompt = f"{neg_prompt}, {DEFAULT_MODEST_NEGATIVE}"
+
+    # Step 4: Attempt synthesis with Hugging Face if HF_TOKEN is configured (SDXL model)
     if HF_TOKEN and model_key == "sdxl":
         try:
             import base64
             client = InferenceClient(token=HF_TOKEN)
             image = client.text_to_image(
-                prompt=req.prompt,
+                prompt=processed_prompt,
                 model=HF_MODELS["sdxl"],
-                negative_prompt=req.negative_prompt,
+                negative_prompt=neg_prompt,
                 guidance_scale=req.guidance_scale,
                 width=req.width,
                 height=req.height
@@ -101,7 +121,7 @@ def generate_image(req: GenerateRequest):
         except Exception as hf_err:
             print(f"Hugging Face SDXL notice: {hf_err}. Falling back to free high-speed SDXL engine.")
 
-    # Step 4: High-speed Real-Time Link generation engine (FLUX & SDXL free inference engine)
+    # Step 5: High-speed Real-Time Link generation engine (FLUX & SDXL free inference engine)
     import random
     import urllib.parse
     import urllib.request
@@ -109,10 +129,8 @@ def generate_image(req: GenerateRequest):
 
     seed = random.randint(10000, 999999)
     
-    # Format prompt with negative prompt if SDXL is selected
-    final_prompt = req.prompt.strip()
-    if model_key == "sdxl" and req.negative_prompt.strip():
-        final_prompt = f"{final_prompt} [avoid: {req.negative_prompt.strip()}]"
+    # Format prompt with explicit swimsuit/bikini avoidance for real-time engine
+    final_prompt = f"{processed_prompt} [avoid: {neg_prompt}]"
 
     encoded_prompt = urllib.parse.quote(final_prompt)
     poll_model = "flux" if model_key == "flux" else "sdxl"
