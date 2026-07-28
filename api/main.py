@@ -7,6 +7,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from huggingface_hub import InferenceClient
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(".env.local")
+    load_dotenv()
+except ImportError:
+    pass
+
 # Initialize the FastAPI application instance
 # This object acts as the core router and handler for all HTTP requests
 app = FastAPI(title="AetherGen Multi-Model Vercel Backend")

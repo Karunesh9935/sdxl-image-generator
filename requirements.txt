@@ -3,3 +3,5 @@ requests
 pydantic
 huggingface_hub
 Pillow
+python-dotenv
+
