@@ -33,14 +33,15 @@ HF_MODELS = {
     "flux": "black-forest-labs/FLUX.1-schnell"
 }
 
-# Regex to detect NSFW / Adult keywords (matching word boundaries case-insensitively).
-# This acts as a simple content moderation filter on the server side to reject explicit prompt requests.
+# Regex to detect NSFW / Adult / Explicit keywords (matching word boundaries case-insensitively).
+# This acts as a content moderation filter on the server side to reject explicit prompt requests.
 NSFW_PATTERN = re.compile(
     r'\b('
     r'nude|nudity|naked|nsfw|porn|porno|pornography|xxx|erotic|erotica|hentai|sex|sexual|sexuality|'
-    r'breast|breasts|nipple|nipples|vagina|penis|genitals|genital|undressed|topless|strip|stripclub|'
-    r'playboy|ass|butt|booty|vibrator|orgasm|masturbate|intercourse|copulation|fuck|fucking|dick|pussy|'
-    r'cunt|blowjob|sensual'
+    r'breast|breasts|boob|boobs|nipple|nipples|vagina|penis|genitals|genital|undressed|topless|bottomless|'
+    r'strip|stripclub|stripper|playboy|ass|butt|booty|vibrator|orgasm|masturbate|intercourse|copulation|'
+    r'fuck|fucking|dick|pussy|cunt|blowjob|sensual|cleavage|lingerie|underwear|thong|g-string|bikini|'
+    r'fetish|bdsm|lewd|slut|whore|bitch|explicit|adult|unclothed|exposed|lust|seductive|provocative'
     r')\b', 
     re.IGNORECASE # Match words regardless of capitalization (e.g., "NSFW", "nsfw", "Nsfw")
 )
@@ -49,7 +50,7 @@ NSFW_PATTERN = re.compile(
 # FastAPI uses this to parse and validate JSON payloads coming in POST requests.
 class GenerateRequest(BaseModel):
     prompt: str                               # The main text prompt describing the image you want to generate
-    negative_prompt: str = "nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, blurry, low quality, distorted" # What the model should avoid (only for SDXL)
+    negative_prompt: str = "nsfw, nude, naked, breasts, nipples, genitals, explicit, adult content, vulgar, erotic, blurry, low quality, distorted" # What the model should avoid (only for SDXL)
     guidance_scale: float = 7.5               # How strictly the model follows the text prompt (CFG scale)
     width: int = 1024                         # Image width in pixels
     height: int = 1024                        # Image height in pixels

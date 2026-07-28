@@ -16,6 +16,9 @@ import {
   Link           // Link icon for copying real-time live link
 } from 'lucide-react';
 
+// Content moderation regex to filter NSFW/Adult/Explicit prompts client-side
+const NSFW_PATTERN = /\b(nude|nudity|naked|nsfw|porn|porno|pornography|xxx|erotic|erotica|hentai|sex|sexual|sexuality|breast|breasts|boob|boobs|nipple|nipples|vagina|penis|genitals|genital|undressed|topless|bottomless|strip|stripclub|stripper|playboy|ass|butt|booty|vibrator|orgasm|masturbate|intercourse|copulation|fuck|fucking|dick|pussy|cunt|blowjob|sensual|cleavage|lingerie|underwear|thong|g-string|bikini|fetish|bdsm|lewd|slut|whore|bitch|explicit|adult|unclothed|exposed|lust|seductive|provocative)\b/i;
+
 export default function App() {
   // ==========================================
   // APPLICATION STATE MANAGEMENT
@@ -122,11 +125,25 @@ export default function App() {
 
   // ==========================================
   // IMAGE SYNTHESIS (MAIN CONTROLLER)
-  // ==========================================
+  // Preload image helper to ensure image is 100% loaded into browser memory before removing spinner
+  const preloadImage = (url) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(url);
+      img.onerror = () => reject(new Error('Failed to render generated image asset.'));
+      img.src = url;
+    });
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
       showToast('Please write a prompt first.', 'error');
+      return;
+    }
+
+    // Client-side content safety check
+    if (NSFW_PATTERN.test(prompt.trim())) {
+      showToast('Prompt violates content safety policy (NSFW/Adult/Explicit content is restricted).', 'error');
       return;
     }
 
@@ -147,7 +164,6 @@ export default function App() {
 
     try {
       let response;
-      let usedProxy = false;
 
       // ATTEMPT 1: Request Serverless Proxy Backend (/api/generate)
       try {
@@ -166,59 +182,72 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        usedProxy = true;
       } catch (proxyError) {
-        console.warn('Backend proxy unreachable, using direct real-time link generation...', proxyError);
+        console.warn('Backend proxy unreachable, switching to direct real-time generator...', proxyError);
       }
 
-      // ATTEMPT 2: Direct Client Fallback (fetches blob for 100% reliable local rendering)
-      if (!response || !response.ok) {
+      // Handle backend safety rejection (HTTP 400 Bad Request)
+      if (response && response.status === 400) {
+        const errData = await response.json().catch(() => ({}));
+        showToast(errData.detail || 'Prompt violates content safety policy.', 'error');
+        return;
+      }
+
+      // Check if backend proxy returned a valid response
+      let finalSrc = '';
+      let finalLiveLink = '';
+
+      if (response && response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          finalSrc = data.image || data.url;
+          finalLiveLink = data.url || finalSrc;
+        } else if (contentType.includes('image/')) {
+          const blob = await response.blob();
+          finalSrc = URL.createObjectURL(blob);
+          finalLiveLink = finalSrc;
+        }
+      }
+
+      // ATTEMPT 2: Direct High-Speed Real-Time Generation (if proxy unavailable or returned non-JSON/HTML)
+      if (!finalSrc) {
+        if (NSFW_PATTERN.test(prompt.trim())) {
+          showToast('Prompt violates content safety policy.', 'error');
+          return;
+        }
+
         const pollModel = model === 'flux' ? 'flux' : 'sdxl';
         const seed = Math.floor(Math.random() * 900000) + 10000;
         const promptText = (model === 'sdxl' && negativePrompt.trim()) 
           ? `${prompt.trim()} [avoid: ${negativePrompt.trim()}]` 
           : prompt.trim();
-        const liveLink = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=${width}&height=${height}&model=${pollModel}&nologo=true&seed=${seed}`;
+        finalLiveLink = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=${width}&height=${height}&model=${pollModel}&nologo=true&seed=${seed}`;
         
         try {
-          const imgResp = await fetch(liveLink);
+          const imgResp = await fetch(finalLiveLink);
           if (imgResp.ok) {
             const blob = await imgResp.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            setImageSrc(blobUrl);
-            setRealtimeUrl(liveLink);
-            showToast('Image generated successfully!');
-            return;
+            finalSrc = URL.createObjectURL(blob);
+          } else {
+            finalSrc = finalLiveLink;
           }
         } catch (fetchErr) {
-          console.warn('Direct fetch error, falling back to direct URL:', fetchErr);
+          console.warn('Direct fetch error, falling back to live link URL:', fetchErr);
+          finalSrc = finalLiveLink;
         }
-
-        setImageSrc(liveLink);
-        setRealtimeUrl(liveLink);
-        showToast('Image generated successfully!');
-        return;
       }
 
-      // Process JSON or Blob response from serverless backend
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await response.json();
-        const displaySrc = data.image || data.url;
-        setImageSrc(displaySrc);
-        setRealtimeUrl(data.url || displaySrc);
-      } else {
-        const blob = await response.blob();
-        const localUrl = URL.createObjectURL(blob);
-        setImageSrc(localUrl);
-        setRealtimeUrl(localUrl);
-      }
+      // Preload the image asset so it renders instantly without flicker or broken box
+      await preloadImage(finalSrc);
 
+      setImageSrc(finalSrc);
+      setRealtimeUrl(finalLiveLink);
       showToast('Real-time image generated successfully!');
 
     } catch (err) {
       console.error(err);
-      showToast(err.message || 'Generation failed.', 'error');
+      showToast(err.message || 'Generation failed. Please try again.', 'error');
     } finally {
       timers.forEach(clearTimeout);
       setIsLoading(false);
