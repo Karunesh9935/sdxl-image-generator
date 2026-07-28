@@ -222,15 +222,12 @@ export default function App() {
         
         let formattedPrompt = prompt.trim();
         const isPeoplePrompt = /\b(girl|woman|female|lady|portrait|person|model|man|guy|boy)\b/i.test(formattedPrompt);
-        const hasClothingSpec = /\b(dress|shirt|jacket|coat|sweater|suit|hoodie|jeans|clothes|clothing|attire|outfit|saree|kurti|t-shirt)\b/i.test(formattedPrompt);
         
-        if (isPeoplePrompt && !hasClothingSpec) {
-          formattedPrompt = `${formattedPrompt}, modestly dressed in elegant casual attire`;
+        if (isPeoplePrompt) {
+          formattedPrompt = `${formattedPrompt}, wearing fully covered modest clothes, long sleeve shirt, winter sweater and jeans, respectful appearance`;
         }
 
-        const combinedAvoid = negativePrompt.trim() 
-          ? negativePrompt.trim() 
-          : 'bikini, swimsuit, swimwear, lingerie, underwear, cleavage, revealing clothing, scantily clad, topless, bottomless, nude, nsfw';
+        const combinedAvoid = 'bikini, swimsuit, swimwear, lingerie, underwear, cleavage, revealing clothing, scantily clad, topless, bottomless, nude, nsfw, stomach, navel, skin, bare shoulder';
 
         const promptText = `${formattedPrompt} [avoid: ${combinedAvoid}]`;
         finalLiveLink = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=${width}&height=${height}&model=${pollModel}&nologo=true&seed=${seed}`;

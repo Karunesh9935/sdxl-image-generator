@@ -82,15 +82,14 @@ def generate_image(req: GenerateRequest):
     if model_key not in HF_MODELS:
         model_key = "sdxl"
 
-    # Step 3: Enforce modest clothing on prompt if describing people without specified clothing
+    # Step 3: Enforce modest clothing directly in positive prompt for any person/girl/woman
     processed_prompt = req.prompt.strip()
-    if PEOPLE_PATTERN.search(processed_prompt) and not CLOTHING_PATTERN.search(processed_prompt):
-        processed_prompt = f"{processed_prompt}, modestly dressed in elegant casual attire"
+    if PEOPLE_PATTERN.search(processed_prompt):
+        # Force full-coverage, modest clothing tags directly into the prompt text
+        processed_prompt = f"{processed_prompt}, wearing fully covered modest clothes, long sleeve shirt, winter sweater and jeans, respectful appearance"
 
-    # Combine user negative prompt with default modest clothing negative prompt
-    neg_prompt = req.negative_prompt.strip() if req.negative_prompt else DEFAULT_MODEST_NEGATIVE
-    if "bikini" not in neg_prompt.lower():
-        neg_prompt = f"{neg_prompt}, {DEFAULT_MODEST_NEGATIVE}"
+    # Combine user negative prompt with strict modest clothing negative prompt
+    neg_prompt = f"{DEFAULT_MODEST_NEGATIVE}, swimsuit, bikini, lingerie, revealing, tight clothing, cleavage, stomach, navel, skin"
 
     # Step 4: Attempt synthesis with Hugging Face if HF_TOKEN is configured (SDXL model)
     if HF_TOKEN and model_key == "sdxl":
@@ -129,9 +128,8 @@ def generate_image(req: GenerateRequest):
 
     seed = random.randint(10000, 999999)
     
-    # Format prompt with explicit swimsuit/bikini avoidance for real-time engine
-    final_prompt = f"{processed_prompt} [avoid: {neg_prompt}]"
-
+    # Prepend modest clothing keywords to the prompt string for Pollinations FLUX / SDXL
+    final_prompt = f"{processed_prompt}, wearing modest fully covered casual attire"
     encoded_prompt = urllib.parse.quote(final_prompt)
     poll_model = "flux" if model_key == "flux" else "sdxl"
     realtime_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={req.width}&height={req.height}&model={poll_model}&nologo=true&seed={seed}"
